@@ -71,23 +71,23 @@ export class ApiError extends Error {
 /** Indirection for tests — production calls `requestUrl` from 'obsidian'. */
 export type RequestFn = (params: RequestUrlParam) => Promise<RequestUrlResponse>;
 
+// `require` is the module-local CommonJS require. In esbuild's bundled
+// output it's the same `require` Obsidian's plugin loader injects — the
+// one that understands the bare specifier `'obsidian'`. `globalThis.require`
+// is a *different* function (Electron's renderer-process require), and it
+// cannot resolve `'obsidian'` — that's what produced the previous
+// `Cannot find module 'obsidian'` error.
+//
+// In Node (CLI / Jest) this binding is `undefined` in ESM context, so the
+// `typeof` guard short-circuits and nobody hits the require call. Both
+// CLI and tests always pass a custom `RequestFn` anyway.
+declare const require: ((id: string) => unknown) | undefined;
+
 const defaultRequest: RequestFn = async (params) => {
-  // We can't use static `import` here — `obsidian` ships only types, so
-  // the import would crash when this module is loaded outside Obsidian
-  // (Jest, CLI emulator). And we can't use `await import('obsidian')`
-  // either: esbuild leaves it as a runtime dynamic import in the bundle,
-  // and Electron's renderer doesn't support bare-specifier dynamic
-  // imports — they reject with a generic network-style error.
-  //
-  // The fix: synchronous `globalThis.require('obsidian')`. Electron's
-  // CommonJS resolver handles bare specifiers natively, esbuild leaves
-  // dynamic property access alone, and CLI / Jest never enter this path
-  // (they always supply a custom `RequestFn`).
-  const req = (globalThis as unknown as { require?: (id: string) => unknown }).require;
-  if (!req) {
-    throw new Error('default request: globalThis.require unavailable (not running in Obsidian?)');
+  if (typeof require !== 'function') {
+    throw new Error('default request: not running inside the Obsidian plugin runtime');
   }
-  const obsidian = req('obsidian') as {
+  const obsidian = require('obsidian') as {
     requestUrl: (p: RequestUrlParam & { throw: false }) => Promise<RequestUrlResponse>;
   };
   return obsidian.requestUrl({ ...params, throw: false });
