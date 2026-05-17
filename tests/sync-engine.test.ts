@@ -1007,7 +1007,8 @@ describe('SyncEngine — S4 offline drain → reconnect', () => {
     // The watcher echo must NOT have produced a second UPDATE emit. With
     // the pre-fix ordering (meta-after-write), handleLocalModify here
     // would see disk=newBytes, meta=initialHash → emit → loop.
-    const echoEmits = h.socket()
+    const echoEmits = h
+      .socket()
       .emits.slice(emitsBefore)
       .filter((e) => e.event === 'file:update-binary');
     expect(echoEmits).toHaveLength(0);
@@ -1086,7 +1087,10 @@ describe('SyncEngine — S4 offline drain → reconnect', () => {
       return responder();
     });
     const vault = new MemoryVault();
-    vault.files.set('live-test.md', new TextEncoder().encode('local-divergent').buffer as ArrayBuffer);
+    vault.files.set(
+      'live-test.md',
+      new TextEncoder().encode('local-divergent').buffer as ArrayBuffer,
+    );
     const engine = new SyncEngine({
       binding,
       server,

@@ -4,7 +4,7 @@ All notable changes to the Obsidian Team plugin land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — 2026-05-08
+## [0.1.0] — 2026-05-17
 
 Initial MVP release.
 
@@ -46,11 +46,75 @@ Initial MVP release.
 - CLI emulator (`scripts/cli-emulator.ts`) with `list-projects` /
   `list-files` / `pull` / `push` / `watch` for protocol debugging.
 
+### Fixed during S1–S11 manual-test pass
+
+- `initialPush` no longer races the offline-queue drain on reconnect —
+  the two used to fire concurrently and the duplicate emits produced
+  server-side `<path>.conflict-<clientId>` twins.
+- `replayPending` recomputes the content hash from the fresh disk
+  bytes; the stale enqueue-time hash made the server conflict-rename
+  every retry of a file that had been edited between create + flush.
+- `replayPending` keeps `fileIndex` authoritative on every success
+  (CREATE / UPDATE / DELETE / RENAME), so the post-drain `initialPush`
+  skips files the queue already synced.
+- `refreshFileIndex` preserves the client's last-known `contentHash`
+  for known files; overwriting it with the server's current hash made
+  `detectBinaryConflict` see "stored == server" for every remote
+  update and silently adopt the server's copy without a modal.
+- `applyServerUpdateBinary` (plus `applyServerCreate` binary +
+  `snapshotDocToDisk`) updates `meta.contentHash` BEFORE the disk
+  write, so the inevitable watcher echo's hash compare in
+  `handleLocalModify` short-circuits — without this, binary updates
+  cascaded into an infinite emit/apply loop.
+- `RecentlyApplied.mark(path, count)` is now count-based; one
+  system-applied write fans out into multiple watcher events
+  (Obsidian + chokidar split into `unlink` + `add` on Windows) and
+  every echo gets its own slot in the budget. The conflict-keep-both
+  branch marks both source and destination paths with the right
+  per-op counts.
+- `handleLocalCreate` / `handleLocalDelete` guard against stale
+  watcher events whose on-disk state no longer matches the event type
+  (atomic-rename leftovers + chokidar `unlink` mid-overwrite).
+- Catch-up replay (`applyServerOperation`) skips stale ops whose file
+  was deleted / re-created / already moved on the server since the op
+  was logged — prevents spurious delete-vs-update modals, 404s on
+  binary downloads, and inflated `fileIndex` entries.
+- `applyServerRename` drops the stale source when the destination
+  already exists locally instead of throwing "Destination file
+  already exists" and crashing the engine to `error`.
+- Yjs offline edits made while disconnected are pushed back to the
+  server on reconnect via `encodeStateAsUpdate(localDoc,
+serverStateVector)` — previously they stayed stuck in
+  `y-indexeddb` and the server treated every subsequent live edit as
+  a no-op replay.
+- Server contract: `file_not_found` is now the message for
+  UPDATE/DELETE/RENAME on a missing file, matching the plugin's
+  non-retryable suffix heuristic so a single dead-letter op no longer
+  halts the whole offline-queue drain.
+- Server `applyCreate` revives a soft-deleted tombstone at the same
+  path instead of hitting the `@@unique([projectId, path])`
+  constraint; `applyMove` clears a tombstoned target the same way.
+- Server `file:create` for TEXT broadcasts the seeded Yjs state
+  alongside `file:created` so peers materialise the content on disk
+  without waiting for their next `project:join`.
+- Server `project:join` ships `stateVector` per `yjsDoc` so the
+  client can compute the inverse delta for the offline-resync push.
+- `_count.files` aggregates filter `deletedAt: null` so the project
+  dashboard counter matches the actual listing.
+- History view command toggles instead of just opening; the sidebar
+  tab has no inline close X and "right-click → Close" is poor
+  discoverability.
+- "Open log" renders into an in-app modal instead of a vault note —
+  the note used to get picked up by the sync engine and propagated
+  debug dumps to every other vault and the server.
+
 ### Tests
 
-26 Jest suites, 261 unit and integration tests covering every module
+26 Jest suites, 281 unit and integration tests covering every module
 boundary plus the engine's main flows (create / delete / yjs update /
-offline queue / reconnect drain / conflict resolver branches).
+offline queue / reconnect drain / conflict resolver branches / catch-up
+stale-op guards / dual-watcher echo suppression). Server: 12 unit + 9
+integration test files, 48 + 64 tests respectively.
 
 ### Known limitations
 
